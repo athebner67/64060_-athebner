@@ -1,0 +1,418 @@
+---
+title: "Assignment_4"
+author: "Austin Thebner"
+date: "2026-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r preparing data}
+# Install required packages if they are not already installed
+packages <- c("ggplot2", "cluster", "dplyr", "knitr")
+
+for (p in packages) {
+  if (!requireNamespace(p, quietly = TRUE)) {
+    install.packages(p)
+  }
+}
+
+# Load libraries
+library(ggplot2)
+library(cluster)
+library(dplyr)
+library(knitr)
+
+# Import the dataset
+pharma <- read.csv("Pharmaceuticals.csv",
+                   header = TRUE,
+                   stringsAsFactors = FALSE)
+
+# Examine the dataset
+head(pharma)
+str(pharma)
+summary(pharma)
+
+# Check dataset dimensions
+dim(pharma)
+
+# Save company identifiers
+company_names <- pharma$Name
+company_symbols <- pharma$Symbol
+
+# Select the nine numerical variables
+numeric_data <- pharma[, 3:11]
+
+# Select the three categorical variables
+categorical_data <- pharma[, 12:14]
+
+# Check numerical variables
+summary(numeric_data)
+
+# Check for missing values
+colSums(is.na(numeric_data))
+
+# Check for variables with zero variance
+sapply(numeric_data, sd)
+```
+
+
+```{r Standardize}
+# Standardize numerical variables
+scaled_data <- scale(numeric_data)
+
+# Display standardized data
+head(scaled_data)
+
+# Check standardized means
+round(colMeans(scaled_data), 3)
+
+# Check standardized standard deviations
+round(apply(scaled_data, 2, sd), 3)
+
+# Verify there are no invalid values
+anyNA(scaled_data)
+any(is.infinite(scaled_data))
+```
+
+
+
+```{r Number of clusters}
+# Calculate within-cluster sum of squares
+
+wss <- numeric()
+
+for (k in 1:8) {
+
+  model <- kmeans(scaled_data,
+                  centers = k,
+                  nstart = 25)
+
+  wss[k] <- model$tot.withinss
+
+}
+
+# Create elbow results
+elbow_results <- data.frame(
+  Clusters = 1:8,
+  WSS = wss
+)
+
+# Display results
+kable(elbow_results,
+      digits = 3,
+      caption = "Within-Cluster Sum of Squares")
+
+# Plot elbow method
+ggplot(elbow_results,
+       aes(x = Clusters, y = WSS)) +
+  geom_line() +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = 1:8) +
+  labs(title = "Elbow Method for Selecting Clusters",
+       x = "Number of Clusters",
+       y = "Within-Cluster Sum of Squares") +
+  theme_minimal()
+
+
+# Test cluster solutions from 2 through 6
+silhouette_scores <- numeric()
+
+for (k in 2:6) {
+
+
+
+  model <- kmeans(scaled_data,
+                  centers = k,
+                  nstart = 25)
+
+  sil <- silhouette(model$cluster,
+                    dist(scaled_data))
+
+  silhouette_scores[k - 1] <- mean(sil[, 3])
+
+}
+
+# Create silhouette results table
+silhouette_results <- data.frame(
+  Clusters = 2:6,
+  Average_Silhouette = silhouette_scores
+)
+
+# Display results
+kable(silhouette_results,
+      digits = 3,
+      caption = "Silhouette Analysis Results")
+
+# Plot silhouette scores
+ggplot(silhouette_results,
+       aes(x = Clusters,
+           y = Average_Silhouette)) +
+  geom_line() +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = 2:6) +
+  labs(title = "Silhouette Analysis",
+       x = "Number of Clusters",
+       y = "Average Silhouette Width") +
+  theme_minimal()
+
+# Select the number of clusters with the highest silhouette score
+best_k <- silhouette_results$Clusters[
+  which.max(silhouette_results$Average_Silhouette)
+]
+
+# Display selected number of clusters
+best_k
+```
+
+```{r Perform k-Means clustering}
+
+# Perform k-Means clustering
+
+final_model <- kmeans(
+  scaled_data,
+  centers = best_k,
+  nstart = 25,
+  iter.max = 100
+)
+
+# Display model results
+final_model
+
+# Add cluster assignments to the original dataset
+pharma$Cluster <- as.factor(final_model$cluster)
+
+# Create company assignment table
+assignment_results <- data.frame(
+  Symbol = company_symbols,
+  Company = company_names,
+  Cluster = pharma$Cluster
+)
+
+# Display company assignments
+kable(assignment_results,
+      caption = "Pharmaceutical Company Cluster Assignments")
+
+# Display number of companies in each cluster
+cluster_sizes <- as.data.frame(
+  table(pharma$Cluster)
+)
+
+names(cluster_sizes) <- c(
+  "Cluster",
+  "Number_of_Companies"
+)
+
+kable(cluster_sizes,
+      caption = "Companies in Each Cluster")
+
+```
+
+
+```{r Cluster averages}
+# Calculate cluster averages using original values
+cluster_means <- pharma %>%
+  group_by(Cluster) %>%
+  summarise(across(all_of(names(numeric_data)),
+                   ~ mean(.x, na.rm = TRUE)))
+
+kable(cluster_means,
+      digits = 3,
+      caption = "Average Financial Characteristics by Cluster")
+
+# Calculate the number of companies in each cluster
+cluster_sizes <- as.data.frame(
+  table(pharma$Cluster)
+)
+
+names(cluster_sizes) <- c("Cluster", "Number_of_Companies")
+
+kable(cluster_sizes,
+      caption = "Number of Companies in Each Cluster")
+```
+
+```{r analysis}
+# Combine original numerical variables with cluster assignments
+profile_data <- numeric_data
+
+profile_data$Cluster <- pharma$Cluster
+
+# Calculate average financial characteristics by cluster
+cluster_means <- profile_data %>%
+  group_by(Cluster) %>%
+  summarise(
+    across(
+      all_of(names(numeric_data)),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+# Display cluster averages
+kable(cluster_means,
+      digits = 3,
+      caption = "Average Financial Characteristics by Cluster")
+
+# Calculate standardized cluster averages
+scaled_profile <- as.data.frame(scaled_data)
+
+scaled_profile$Cluster <- pharma$Cluster
+
+standardized_means <- scaled_profile %>%
+  group_by(Cluster) %>%
+  summarise(
+    across(
+      all_of(names(numeric_data)),
+      ~ mean(.x)
+    ),
+    .groups = "drop"
+  )
+
+# Display standardized cluster averages
+kable(standardized_means,
+      digits = 3,
+      caption = "Standardized Financial Profiles by Cluster")
+
+```
+
+```{r visualize}
+# Perform principal component analysis
+pca_model <- prcomp(scaled_data,
+                    center = FALSE,
+                    scale. = FALSE)
+
+# Create PCA visualization data
+pca_data <- data.frame(
+  PC1 = pca_model$x[, 1],
+  PC2 = pca_model$x[, 2],
+  Cluster = pharma$Cluster,
+  Company = company_names
+)
+
+# Create PCA plot
+ggplot(pca_data,
+       aes(x = PC1,
+           y = PC2,
+           color = Cluster,
+           label = Company)) +
+  geom_point(size = 4) +
+  geom_text(vjust = -0.8,
+            size = 2.5,
+            show.legend = FALSE) +
+  labs(title = "Pharmaceutical Company Clusters",
+       subtitle = "Principal Component Analysis",
+       x = "Principal Component 1",
+       y = "Principal Component 2",
+       color = "Cluster") +
+  theme_minimal()
+
+# Display percentage of variance explained
+summary(pca_model)
+
+```
+
+```{r}
+# Create recommendation frequency table
+recommendation_table <- table(
+  pharma$Cluster,
+  pharma$Median_Recommendation
+)
+
+kable(as.data.frame.matrix(recommendation_table),
+      caption = "Broker Recommendations by Cluster")
+
+# Calculate percentages within each cluster
+recommendation_percentages <- prop.table(
+  recommendation_table,
+  margin = 1
+) * 100
+
+kable(round(as.data.frame.matrix(recommendation_percentages), 1),
+      caption = "Broker Recommendation Percentages by Cluster")
+
+# Create headquarters location table
+location_table <- table(
+  pharma$Cluster,
+  pharma$Location
+)
+
+kable(as.data.frame.matrix(location_table),
+      caption = "Headquarters Locations by Cluster")
+
+# Calculate percentages
+location_percentages <- prop.table(
+  location_table,
+  margin = 1
+) * 100
+
+kable(round(as.data.frame.matrix(location_percentages), 1),
+      caption = "Headquarters Location Percentages by Cluster")
+
+# Create stock exchange table
+exchange_table <- table(
+  pharma$Cluster,
+  pharma$Exchange
+)
+
+kable(as.data.frame.matrix(exchange_table),
+      caption = "Stock Exchanges by Cluster")
+
+# Calculate percentages
+exchange_percentages <- prop.table(
+  exchange_table,
+  margin = 1
+) * 100
+
+kable(round(as.data.frame.matrix(exchange_percentages), 1),
+      caption = "Stock Exchange Percentages by Cluster")
+
+```
+
+```{r cluster profiles}
+# Create final cluster summary
+final_summary <- cluster_means %>%
+  left_join(cluster_sizes, by = "Cluster")
+
+# Display final summary
+kable(final_summary,
+      digits = 3,
+      caption = "Final Pharmaceutical Cluster Summary")
+
+# Display company names and cluster memberships
+kable(assignment_results,
+      caption = "Final Company Cluster Memberships")
+```
+
+
+B
+
+The results show that the three clusters have different financial characteristics. Cluster 1 has relatively low market capitalization, averaging 9.235, but has the highest revenue growth at 23.490%. It also has the highest leverage at 1.250. Overall, this cluster represents smaller companies that are growing quickly but rely more heavily on debt.
+
+Cluster 2 contains the largest and most profitable companies. It has the highest market capitalization at 97.114, the highest return on equity at 35.7%, and the highest return on assets at 14.955%. It also has the highest net profit margin at 20.173% and the lowest beta at 0.434. This suggests that these companies are larger, more profitable, and have lower market risk.
+
+Cluster 3 has the highest P/E ratio at 46.900, but the lowest revenue growth at 7.010%, return on equity at 11.3%, and net profit margin at 6.650%. This suggests that these companies have higher stock valuations but lower profitability and growth compared with the other clusters.
+
+Overall, Cluster 1 represents smaller companies with strong growth and higher leverage. Cluster 2 represents larger, more profitable companies with lower risk. Cluster 3 represents companies with higher P/E ratios but weaker growth and profitability.
+
+
+C
+ 
+There are a few patterns in the clusters when looking at the remaining variables. Cluster 1 has the most Moderate Buy recommendations, while Cluster 2 has the most Hold recommendations. Cluster 3 is also mostly rated Hold.
+
+For company location, Clusters 1 and 2 are mostly made up of US-based companies. Cluster 3 is more spread out, with companies from the US, Canada, Germany, and the UK.
+
+For stock exchange, all companies in Clusters 2 and 3 are listed on the NYSE. Cluster 1 is also mostly NYSE-listed, with one AMEX company and one NASDAQ company.
+
+Overall, there are some patterns in company location and stock exchange, but the recommendations are more mixed.
+
+
+D
+
+Cluster 1 – High-Growth, High-Leverage Companies - These companies have the strongest revenue growth but also rely more heavily on debt.
+
+Cluster 2 – Large, Profitable Companies - These companies have the highest market capitalization and profitability, along with the lowest beta.
+
+Cluster 3 – High-Valuation, Low-Growth Companies - These companies have the highest P/E ratios but lower revenue growth and profitability.
+
